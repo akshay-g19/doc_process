@@ -7,7 +7,7 @@ import org.springframework.context.ApplicationContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@SpringBootTest(properties = "spring.cloud.aws.sqs.enabled=false")
 class DocProcessApplicationTests {
 
 	@Autowired

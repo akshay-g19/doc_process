@@ -1,6 +1,6 @@
 package com.java.doc_process.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.java.doc_process.repository.FileMetadataRepository;
 
 import com.java.doc_process.service.S3Service;
