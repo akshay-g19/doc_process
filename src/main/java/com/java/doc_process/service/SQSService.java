@@ -1,17 +1,13 @@
 package com.java.doc_process.service;
 
-
-import java.util.List;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.java.doc_process.model.DocumentEvent;
+
 import lombok.extern.slf4j.Slf4j;
+import tools.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.services.sqs.SqsAsyncClient;
-import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
-import software.amazon.awssdk.services.sqs.model.Message;
-import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
-import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
 @Slf4j
@@ -19,38 +15,37 @@ import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 public class SQSService {
 
     private final SqsAsyncClient sqsClient;
+    private final ObjectMapper objectMapper;
+    private final String queueUrl;
+    private final String queueName;
 
-    @Value("${spring.cloud.aws.sqs.queue-url}")
-    private String queueUrl;
-
-    public SQSService(SqsAsyncClient sqsClient) {
+    public SQSService(
+            SqsAsyncClient sqsClient,
+            ObjectMapper objectMapper,
+            @Value("${aws.sqs.queue-url:}") String queueUrl,
+            @Value("${aws.sqs.queue-name}") String queueName) {
         this.sqsClient = sqsClient;
+        this.objectMapper = objectMapper;
+        this.queueUrl = queueUrl;
+        this.queueName = queueName;
     }
 
-    public void publishMessage(String messageBody) {
-        SendMessageRequest sendMsgRequest = SendMessageRequest.builder()
-                .queueUrl(queueUrl)
-                .messageBody(messageBody)
-                .build();
-        sqsClient.sendMessage(sendMsgRequest);
-        log.info("Message published to SQS: {}", messageBody);
-    }
-
-    public List<Message> receiveMessages() {
-        ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
-                .queueUrl(queueUrl)
-                .maxNumberOfMessages(5)
-                .waitTimeSeconds(5)
-                .build();
-        return sqsClient.receiveMessage(receiveRequest)
-                .thenApply(ReceiveMessageResponse::messages)
+    public void publishMessage(DocumentEvent event) {
+        String body = objectMapper.writeValueAsString(event);
+        sqsClient.sendMessage(SendMessageRequest.builder()
+                        .queueUrl(resolveQueueUrl())
+                        .messageBody(body)
+                        .build())
                 .join();
+        log.info("Document {} state=PUBLISHED", event.documentId());
     }
 
-    public void deleteMessage(String receiptHandle) {
-        sqsClient.deleteMessage(DeleteMessageRequest.builder()
-                .queueUrl(queueUrl).
-                receiptHandle(receiptHandle)
-                .build());
+    private String resolveQueueUrl() {
+        if (queueUrl != null && !queueUrl.isBlank()) {
+            return queueUrl;
+        }
+        return sqsClient.getQueueUrl(request -> request.queueName(queueName))
+                .join()
+                .queueUrl();
     }
 }

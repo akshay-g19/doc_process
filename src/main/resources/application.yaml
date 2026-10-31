@@ -1,25 +1,63 @@
 spring:
   application:
-    name: doc_process
+    name: doc-process
+  servlet:
+    multipart:
+      max-file-size: ${app.upload.max-size}
+      max-request-size: ${app.upload.max-request-size}
   cloud:
     aws:
-      credentials:
-        access-key: test
-        secret-key: test
+      region:
+        static: ${aws.region.static}
       sqs:
-        queue-name: doc-process-queue
-        queue-url: https://localhost.localstack.cloud:4566/000000000000/doc-process-queue
+        enabled: true
+  jackson:
+    default-property-inclusion: non_null
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  web:
+    resources:
+      add-mappings: false
+
+server:
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+app:
+  upload:
+    max-bytes: ${MAX_UPLOAD_BYTES:5242880}
+    max-size: ${MAX_UPLOAD_SIZE:5MB}
+    max-request-size: ${MAX_UPLOAD_REQUEST_SIZE:6MB}
 
 aws:
   region:
-    static: ap-south-1
-  endpoint: http://localhost.localstack.cloud:4566
+    static: ${AWS_REGION:ap-south-1}
+  client:
+    api-call-timeout: ${AWS_API_CALL_TIMEOUT:10s}
+    api-call-attempt-timeout: ${AWS_API_CALL_ATTEMPT_TIMEOUT:3s}
   s3:
-    bucket-name: doc-process-bucket
-  sns:
-    topic-name: doc-process-topic
+    bucket-name: ${AWS_S3_BUCKET_NAME:doc-process-bucket}
+    path-style-access: false
+  sqs:
+    queue-name: ${AWS_SQS_QUEUE_NAME:doc-process-queue}
+    queue-url: ${AWS_SQS_QUEUE_URL:}
   dynamo-db:
-    table-name: doc-process-table
-  credentials:
-    access-key: test
-    secret-key: test
+    table-name: ${AWS_DYNAMODB_TABLE_NAME:doc-process-table}

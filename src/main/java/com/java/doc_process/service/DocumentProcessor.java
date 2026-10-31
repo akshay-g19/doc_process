@@ -1,46 +1,83 @@
 package com.java.doc_process.service;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import com.java.doc_process.exception.DocumentProcessingException;
+import com.java.doc_process.modal.FileMetadata;
+import com.java.doc_process.model.DocumentEvent;
+import com.java.doc_process.model.ProcessingResult;
+
 import io.awspring.cloud.sqs.annotation.SqsListener;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 @Slf4j
 @RequiredArgsConstructor
 public class DocumentProcessor {
+
     private final DynamoDBService dynamoDBService;
+    private final S3Service s3Service;
+    private final DocumentTransformer transformer;
     private final ObjectMapper mapper;
 
-    @SqsListener("doc-process-queue")
+    @Value("${aws.s3.bucket-name}")
+    private String configuredBucket;
+
+    @SqsListener("${aws.sqs.queue-name}")
     public void processQueue(String message) {
-        log.info("Processing Queue");
+        DocumentEvent event = mapper.readValue(message, DocumentEvent.class);
+        validateEvent(event);
+
+        FileMetadata existing = dynamoDBService.findById(event.documentId());
+        if (existing == null) {
+            throw new DocumentProcessingException("Document metadata is missing", null);
+        }
+        if (!event.key().equals(existing.getInputS3Key())) {
+            throw new DocumentProcessingException("Queue event does not match document metadata", null);
+        }
+        if ("COMPLETED".equals(existing.getStatus())) {
+            log.info("Document {} state=COMPLETED duplicateDelivery=true", event.documentId());
+            return;
+        }
+
         try {
-            log.info("Processing Message ID: {}", message);
-            processDocument(message);
-            log.info("Message processed Successfully: {}", message);
-        } catch (Exception e) {
-            log.error("Error processing message {}: {}", message, e.getMessage());
+            dynamoDBService.markProcessing(event.documentId());
+            byte[] contents = s3Service.download(event.bucket(), event.key());
+            ProcessingResult result = transformer.transform(event.documentId(), contents);
+            String outputKey = "output/" + event.documentId() + "/result.json";
+            byte[] resultBytes = mapper.writeValueAsBytes(result);
+            s3Service.uploadResult(event.bucket(), outputKey, resultBytes);
+            dynamoDBService.markCompleted(event.documentId(), outputKey);
+            log.info("Document {} state=COMPLETED", event.documentId());
+        } catch (Exception processingFailure) {
+            String safeError = "Processing failed (" + processingFailure.getClass().getSimpleName() + ")";
+            try {
+                dynamoDBService.markFailed(event.documentId(), safeError);
+            } catch (RuntimeException statusFailure) {
+                processingFailure.addSuppressed(statusFailure);
+            }
+            log.error("Document {} state=FAILED failureType={}",
+                    event.documentId(),
+                    processingFailure.getClass().getSimpleName());
+            throw new DocumentProcessingException("Document processing failed", processingFailure);
         }
     }
 
-    private void processDocument(String messageBody) throws Exception {
-        JsonNode jsonNode = mapper.readTree(messageBody);
-
-        String s3Key = jsonNode.get("s3Key").asText();
-        String fileId = s3Key;
-
-        dynamoDBService.updateService(fileId, "Processing", null);
-
-        log.info("Processing document: {}", fileId);
-        Thread.sleep(10000);
-
-        String outputKey = s3Key.replace("input/", "/output").replace("orignal.pdf", "result.json");
-
-        dynamoDBService.updateService(fileId, "Completed", outputKey);
-
-        log.info("Document processed successfully: {}", outputKey);
+    private void validateEvent(DocumentEvent event) {
+        if (event == null
+                || event.version() != DocumentEvent.CURRENT_VERSION
+                || event.documentId() == null
+                || event.documentId().isBlank()
+                || event.key() == null
+                || event.key().isBlank()
+                || !event.key().startsWith("input/" + event.documentId() + "/")
+                || !configuredBucket.equals(event.bucket())) {
+            throw new DocumentProcessingException("Queue event is invalid or unsupported", null);
+        }
     }
 }

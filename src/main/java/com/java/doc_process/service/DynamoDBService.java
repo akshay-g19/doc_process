@@ -1,9 +1,7 @@
 package com.java.doc_process.service;
 
-
 import java.time.Instant;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.java.doc_process.modal.FileMetadata;
@@ -17,33 +15,48 @@ public class DynamoDBService {
 
     private final FileMetadataRepository repository;
 
-    @Value("${aws.dynamo-db.table-name}")
-    private String tableName;
-
     public DynamoDBService(FileMetadataRepository repository) {
         this.repository = repository;
     }
 
-    public void saveFileMetadata(String bucketName, String key, long size,String contentType,String eTag) {
-        FileMetadata metadata = new FileMetadata();
-        metadata.setFileId(key);
-        metadata.setFileName(key);
-        metadata.setInputS3Key(key);
-        metadata.setSize(size);
-        metadata.setStatus("Pending");
-        metadata.setUploadedAt(Instant.now().toString());
+    public void create(FileMetadata metadata) {
         repository.save(metadata);
-        log.info("File metadata saved in DynamoDB: {}", tableName);
+        log.info("Document {} state={}", metadata.getDocumentId(), metadata.getStatus());
     }
 
-    public void updateService(String fileId, String status, String outputKey){
-        FileMetadata metadata = repository.findById(fileId);
-        if (metadata != null){
-            metadata.setStatus(status);
-            if (outputKey != null) metadata.setOutputS3Key(outputKey);
-            metadata.setProcessedAt(Instant.now().toString());
-            repository.save(metadata);
+    public FileMetadata findById(String documentId) {
+        return repository.findById(documentId);
+    }
+
+    public void markProcessing(String documentId) {
+        update(documentId, "PROCESSING", null, null, false);
+    }
+
+    public void markCompleted(String documentId, String outputKey) {
+        update(documentId, "COMPLETED", outputKey, null, true);
+    }
+
+    public void markFailed(String documentId, String safeError) {
+        update(documentId, "FAILED", null, safeError, true);
+    }
+
+    private void update(String documentId, String status, String outputKey, String error, boolean processed) {
+        FileMetadata metadata = repository.findById(documentId);
+        if (metadata == null) {
+            throw new IllegalStateException("Document metadata is missing");
         }
-    }
 
+        Instant now = Instant.now();
+        metadata.setStatus(status);
+        metadata.setUpdatedAt(now.toString());
+        metadata.setError(error);
+        if (outputKey != null) {
+            metadata.setOutputS3Key(outputKey);
+        }
+        if (processed) {
+            metadata.setProcessedAt(now.toString());
+        }
+        repository.save(metadata);
+        log.info("Document {} state={}", documentId, status);
+    }
 }

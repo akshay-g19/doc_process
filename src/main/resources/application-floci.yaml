@@ -1,0 +1,19 @@
+aws:
+  endpoint: ${FLOCI_ENDPOINT:http://localhost:4566}
+  credentials:
+    access-key: ${AWS_ACCESS_KEY_ID:test}
+    secret-key: ${AWS_SECRET_ACCESS_KEY:test}
+  s3:
+    path-style-access: true
+  sqs:
+    queue-url: ${AWS_SQS_QUEUE_URL:http://localhost:4566/000000000000/${aws.sqs.queue-name}}
+
+spring:
+  cloud:
+    aws:
+      endpoint: ${FLOCI_ENDPOINT:http://localhost:4566}
+      region:
+        static: ${aws.region.static}
+      credentials:
+        access-key: ${aws.credentials.access-key}
+        secret-key: ${aws.credentials.secret-key}

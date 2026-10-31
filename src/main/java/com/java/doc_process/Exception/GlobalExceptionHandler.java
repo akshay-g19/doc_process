@@ -1,45 +1,73 @@
-package com.java.doc_process.Exception;
+package com.java.doc_process.exception;
+
+import java.time.Instant;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
-import software.amazon.awssdk.services.s3.model.S3Exception;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
+import com.java.doc_process.model.ApiError;
+
+import jakarta.servlet.http.HttpServletRequest;
+import software.amazon.awssdk.core.exception.SdkException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(DynamoDbException.class)
-    public ResponseEntity<Map<String, Object>> handleDynamoDbException(DynamoDbException ex) {
-        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Database Error", ex.getMessage());
+    @ExceptionHandler(DocumentNotFoundException.class)
+    public ResponseEntity<ApiError> handleNotFound(
+            DocumentNotFoundException exception,
+            HttpServletRequest request) {
+        return response(HttpStatus.NOT_FOUND, "Not Found", exception.getMessage(), request);
     }
 
-    @ExceptionHandler(S3Exception.class)
-    public ResponseEntity<Map<String, Object>> handleS3Exception(S3Exception ex) {
-        return buildResponse(HttpStatus.BAD_GATEWAY, "Storage Error", ex.getMessage());
+    @ExceptionHandler({IllegalArgumentException.class, MultipartException.class})
+    public ResponseEntity<ApiError> handleValidation(
+            RuntimeException exception,
+            HttpServletRequest request) {
+        String message = exception instanceof IllegalArgumentException
+                ? exception.getMessage()
+                : "Invalid multipart upload";
+        return response(HttpStatus.BAD_REQUEST, "Validation Error", message, request);
     }
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, Object>> handleIllegalArgumentException(IllegalArgumentException ex) {
-        return buildResponse(HttpStatus.BAD_REQUEST, "Validation Error", ex.getMessage());
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiError> handleUploadTooLarge(HttpServletRequest request) {
+        return response(HttpStatus.PAYLOAD_TOO_LARGE, "Payload Too Large",
+                "File exceeds the configured upload limit", request);
+    }
+
+    @ExceptionHandler(QueuePublishException.class)
+    public ResponseEntity<ApiError> handleQueueUnavailable(HttpServletRequest request) {
+        return response(HttpStatus.SERVICE_UNAVAILABLE, "Queue Unavailable",
+                "The document was stored but could not be queued. Its status is FAILED.", request);
+    }
+
+    @ExceptionHandler(SdkException.class)
+    public ResponseEntity<ApiError> handleAwsFailure(HttpServletRequest request) {
+        return response(HttpStatus.BAD_GATEWAY, "Storage Service Error",
+                "A required storage service is unavailable", request);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleGeneralException(Exception ex) {
-        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", ex.getMessage());
+    public ResponseEntity<ApiError> handleGeneralException(HttpServletRequest request) {
+        return response(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error",
+                "An unexpected error occurred", request);
     }
 
-    private ResponseEntity<Map<String, Object>> buildResponse(HttpStatus status, String error, String message) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("timestamp", LocalDateTime.now().toString());
-        body.put("status", status.value());
-        body.put("error", error);
-        body.put("message", message);
-        return new ResponseEntity<>(body, status);
+    private ResponseEntity<ApiError> response(
+            HttpStatus status,
+            String error,
+            String message,
+            HttpServletRequest request) {
+        return ResponseEntity.status(status).body(new ApiError(
+                Instant.now(),
+                status.value(),
+                error,
+                message,
+                request.getRequestURI()));
     }
 }
